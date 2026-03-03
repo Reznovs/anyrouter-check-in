@@ -6,7 +6,7 @@ on:
 
 jobs:
   checkin:
-    runs-on: windows-2025
+    runs-on: ubuntu-latest
     environment: production
     env:
       PYTHONIOENCODING: utf-8
@@ -42,15 +42,15 @@ jobs:
     - name: 获取 Playwright 版本
       id: playwright-version
       run: |
-        $version = uv run python -c "import importlib.metadata; print(importlib.metadata.version('playwright'))"
-        echo "version=$version" >> $env:GITHUB_OUTPUT
+        version=$(uv run python -c "import importlib.metadata; print(importlib.metadata.version('playwright'))")
+        echo "version=$version" >> "$GITHUB_OUTPUT"
         echo "Playwright version: $version"
 
     - name: 缓存 Playwright 浏览器
       uses: actions/cache@v4
       id: playwright-cache
       with:
-        path: ~\AppData\Local\ms-playwright
+        path: ~/.cache/ms-playwright
         key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
         restore-keys: |
           ${{ runner.os }}-playwright-
@@ -104,9 +104,9 @@ jobs:
     - name: 执行结果
       if: always()
       run: |
-        if (Test-Path checkin_summary.md) {
-          Get-Content checkin_summary.md -Raw | Out-File -Append -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+        if [ -f checkin_summary.md ]; then
+          cat checkin_summary.md >> "$GITHUB_STEP_SUMMARY"
           echo "✅ Summary written"
-        } else {
+        else
           echo "⚠️ No summary file found"
-        }
+        fi
