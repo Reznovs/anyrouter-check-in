@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 
 from utils.auth import resolve_account_auth, retry_with_relogin
+from utils.log import log
 from utils.config import AccountConfig, AppConfig, load_accounts_config
 from utils.notify import notify
 
@@ -22,12 +23,6 @@ load_dotenv()
 
 BALANCE_HASH_FILE = 'balance_hash.txt'
 SUMMARY_FILE = 'checkin_summary.md'
-
-
-def log(level: str, msg: str, account: str = ''):
-	"""统一日志输出"""
-	prefix = f'{account} > ' if account else ''
-	print(f'[{level}] {prefix}{msg}')
 
 
 def load_balance_hash():
@@ -301,7 +296,8 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 	"""为单个账号执行签到操作"""
 	account_name = account.get_display_name(account_index)
 	print(f'\n{"=" * 50}')
-	log('INFO', f'Provider: {account.provider} ({app_config.get_provider(account.provider).domain if app_config.get_provider(account.provider) else "?"})', account_name)
+	provider_domain = app_config.get_provider(account.provider).domain if app_config.get_provider(account.provider) else '?'
+	log('INFO', f'Provider: {account.provider} ({provider_domain})', account_name)
 
 	provider_config = app_config.get_provider(account.provider)
 	if not provider_config:
@@ -309,7 +305,7 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 		return False, None, None
 
 	# 解析认证信息（支持 cookies 方式和用户名密码方式）
-	auth_result = await resolve_account_auth(account, provider_config)
+	auth_result = await resolve_account_auth(account, provider_config, account_name)
 	if not auth_result:
 		log('FAIL', 'Authentication failed', account_name)
 		return False, None, None

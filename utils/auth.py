@@ -12,17 +12,12 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 from utils.config import AccountConfig, ProviderConfig, parse_cookies
+from utils.log import log, mask
 
 SESSION_CACHE_DIR = Path('.session_cache')
 
 # session 缓存过期时间（25 天，session 有效期 30 天，留 5 天余量）
 SESSION_CACHE_MAX_AGE = 25 * 24 * 3600
-
-
-def log(level: str, msg: str, account: str = ''):
-	"""统一日志输出"""
-	prefix = f'{account} > ' if account else ''
-	print(f'[{level}] {prefix}{msg}')
 
 
 @dataclass
@@ -77,7 +72,7 @@ async def login(username: str, password: str, provider_config: ProviderConfig, a
 	"""使用 Playwright 通过用户名密码登录，获取 session、api_user 和 WAF cookies"""
 	login_api_url = f'{provider_config.domain}{provider_config.login_api_path}'
 	login_page_url = f'{provider_config.domain}{provider_config.login_path}'
-	log('INFO', f'Logging in as {username} via Playwright...', account_name)
+	log('INFO', f'Logging in as {mask(username)} via Playwright...', account_name)
 
 	try:
 		async with async_playwright() as p:
@@ -205,7 +200,7 @@ async def login(username: str, password: str, provider_config: ProviderConfig, a
 
 
 async def resolve_account_auth(
-	account: AccountConfig, provider_config: ProviderConfig
+	account: AccountConfig, provider_config: ProviderConfig, account_name: str = ''
 ) -> tuple[dict, str, dict] | None:
 	"""解析账号的认证信息
 
@@ -227,13 +222,13 @@ async def resolve_account_auth(
 	# 先尝试缓存的 session
 	cached = load_session_cache(username, account.provider)
 	if cached:
-		log('INFO', f'Using cached session for {username}')
+		log('INFO', f'Using cached session for {mask(username)}', account_name)
 		return ({'session': cached['session']}, cached['api_user'], {})
 
 	# 缓存不可用，执行 Playwright 登录
-	result = await login(username, password, provider_config)
+	result = await login(username, password, provider_config, account_name)
 	if not result.success:
-		log('FAIL', f'{result.error}')
+		log('FAIL', f'{result.error}', account_name)
 		return None
 
 	save_session_cache(username, account.provider, result.session, result.api_user)
@@ -253,7 +248,7 @@ async def retry_with_relogin(
 	if not username or not password:
 		return None
 
-	log('INFO', f'Session expired, re-logging in as {username}...', account_name)
+	log('INFO', f'Session expired, re-logging in as {mask(username)}...', account_name)
 	result = await login(username, password, provider_config, account_name)
 	if not result.success:
 		log('FAIL', f'Re-login failed: {result.error}', account_name)
