@@ -16,6 +16,7 @@ class ProviderConfig:
 	name: str
 	domain: str
 	login_path: str = '/login'
+	login_api_path: str = '/api/user/login?turnstile='
 	sign_in_path: str | None = '/api/user/sign_in'
 	user_info_path: str = '/api/user/self'
 	api_user_key: str = 'new-api-user'
@@ -50,6 +51,7 @@ class ProviderConfig:
 			name=name,
 			domain=data['domain'],
 			login_path=data.get('login_path', '/login'),
+			login_api_path=data.get('login_api_path', '/api/user/login?turnstile='),
 			sign_in_path=data.get('sign_in_path', '/api/user/sign_in'),
 			user_info_path=data.get('user_info_path', '/api/user/self'),
 			api_user_key=data.get('api_user_key', 'new-api-user'),
@@ -135,10 +137,19 @@ class AppConfig:
 class AccountConfig:
 	"""账号配置"""
 
-	cookies: dict | str
-	api_user: str
+	# 方式A：直接提供 cookies + api_user
+	cookies: dict | str | None = None
+	api_user: str | None = None
+	# 方式B：用户名密码登录（自动获取 session 和 api_user）
+	username: str | None = None
+	password: str | None = None
+
 	provider: str = 'anyrouter'
 	name: str | None = None
+
+	def uses_credential_login(self) -> bool:
+		"""判断是否使用用户名密码登录方式"""
+		return bool(self.username and self.password)
 
 	@classmethod
 	def from_dict(cls, data: dict, index: int) -> 'AccountConfig':
@@ -146,7 +157,14 @@ class AccountConfig:
 		provider = data.get('provider', 'anyrouter')
 		name = data.get('name', f'Account {index + 1}')
 
-		return cls(cookies=data['cookies'], api_user=data['api_user'], provider=provider, name=name if name else None)
+		return cls(
+			cookies=data.get('cookies'),
+			api_user=data.get('api_user'),
+			username=data.get('username'),
+			password=data.get('password'),
+			provider=provider,
+			name=name if name else None,
+		)
 
 	def get_display_name(self, index: int) -> str:
 		"""获取显示名称"""
@@ -173,8 +191,10 @@ def load_accounts_config() -> list[AccountConfig] | None:
 				print(f'ERROR: Account {i + 1} configuration format is incorrect')
 				return None
 
-			if 'cookies' not in account_dict or 'api_user' not in account_dict:
-				print(f'ERROR: Account {i + 1} missing required fields (cookies, api_user)')
+			has_cookies = 'cookies' in account_dict and 'api_user' in account_dict
+			has_credentials = 'username' in account_dict and 'password' in account_dict
+			if not has_cookies and not has_credentials:
+				print(f'ERROR: Account {i + 1} must have either (cookies + api_user) or (username + password)')
 				return None
 
 			if 'name' in account_dict and not account_dict['name']:
@@ -187,3 +207,21 @@ def load_accounts_config() -> list[AccountConfig] | None:
 	except Exception as e:
 		print(f'ERROR: Account configuration format is incorrect: {e}')
 		return None
+
+
+def parse_cookies(cookies_data: dict | str | None) -> dict:
+	"""解析 cookies 数据"""
+	if cookies_data is None:
+		return {}
+
+	if isinstance(cookies_data, dict):
+		return cookies_data
+
+	if isinstance(cookies_data, str):
+		cookies_dict = {}
+		for cookie in cookies_data.split(';'):
+			if '=' in cookie:
+				key, value = cookie.strip().split('=', 1)
+				cookies_dict[key] = value
+		return cookies_dict
+	return {}

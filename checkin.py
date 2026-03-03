@@ -14,6 +14,7 @@ import httpx
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 
+from utils.auth import resolve_account_auth, retry_with_relogin
 from utils.config import AccountConfig, AppConfig, load_accounts_config
 from utils.notify import notify
 
@@ -48,21 +49,6 @@ def generate_balance_hash(balances):
 	simple_balances = {k: v['quota'] for k, v in balances.items()} if balances else {}
 	balance_json = json.dumps(simple_balances, sort_keys=True, separators=(',', ':'))
 	return hashlib.sha256(balance_json.encode('utf-8')).hexdigest()[:16]
-
-
-def parse_cookies(cookies_data):
-	"""解析 cookies 数据"""
-	if isinstance(cookies_data, dict):
-		return cookies_data
-
-	if isinstance(cookies_data, str):
-		cookies_dict = {}
-		for cookie in cookies_data.split(';'):
-			if '=' in cookie:
-				key, value = cookie.strip().split('=', 1)
-				cookies_dict[key] = value
-		return cookies_dict
-	return {}
 
 
 async def get_waf_cookies_with_playwright(account_name: str, login_url: str, required_cookies: list[str]):
@@ -264,18 +250,21 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 	provider_config = app_config.get_provider(account.provider)
 	if not provider_config:
 		print(f'[FAILED] {account_name}: Provider "{account.provider}" not found in configuration')
-		return False, None
+		return False, None, None
 
 	print(f'[INFO] {account_name}: Using provider "{account.provider}" ({provider_config.domain})')
 
-	user_cookies = parse_cookies(account.cookies)
-	if not user_cookies:
-		print(f'[FAILED] {account_name}: Invalid configuration format')
-		return False, None
+	# 解析认证信息（支持 cookies 方式和用户名密码方式）
+	auth_result = resolve_account_auth(account, provider_config)
+	if not auth_result:
+		print(f'[FAILED] {account_name}: Authentication failed')
+		return False, None, None
+
+	user_cookies, api_user = auth_result
 
 	all_cookies = await prepare_cookies(account_name, provider_config, user_cookies)
 	if not all_cookies:
-		return False, None
+		return False, None, None
 
 	client = httpx.Client(http2=True, timeout=30.0)
 
@@ -293,11 +282,25 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 			'Sec-Fetch-Dest': 'empty',
 			'Sec-Fetch-Mode': 'cors',
 			'Sec-Fetch-Site': 'same-origin',
-			provider_config.api_user_key: account.api_user,
+			provider_config.api_user_key: api_user,
 		}
 
 		user_info_url = f'{provider_config.domain}{provider_config.user_info_path}'
 		user_info_before = get_user_info(client, headers, user_info_url)
+
+		# 检查是否 session 过期（401），尝试自动重新登录
+		if user_info_before and not user_info_before.get('success') and '401' in user_info_before.get('error', ''):
+			relogin_result = retry_with_relogin(account, provider_config)
+			if relogin_result:
+				new_cookies, new_api_user = relogin_result
+				all_cookies = await prepare_cookies(account_name, provider_config, new_cookies)
+				if all_cookies:
+					client.cookies.clear()
+					client.cookies.update(all_cookies)
+					headers[provider_config.api_user_key] = new_api_user
+					api_user = new_api_user
+					user_info_before = get_user_info(client, headers, user_info_url)
+
 		if user_info_before and user_info_before.get('success'):
 			print(user_info_before['display'])
 		elif user_info_before:
